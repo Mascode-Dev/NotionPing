@@ -54,6 +54,4 @@ def get_notion_events():
         json.dump(data, f, indent=4)
     return data
 
-
-
-# print(get_notion_events())
+get_notion_events()
