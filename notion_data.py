@@ -1,6 +1,6 @@
 ﻿import os
 import requests
-import discord
+import notion_data
 from dotenv import load_dotenv
 import json
 
