@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import tasks
-from database_models import DatabaseManager, NotionEvent
+from database_models import DatabaseManager, NotionEvent, User
 from dotenv import load_dotenv
 import os
 
@@ -17,6 +17,9 @@ print("Token:", TOKEN)
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 print("Channel ID:", CHANNEL_ID)
 
+
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID")) 
+print("Guild ID:", GUILD_ID)
 # ------------------------
 # 🤖 Discord Bot
 # ------------------------
@@ -33,9 +36,60 @@ db = DatabaseManager()
 # ------------------------
 @bot.event
 async def on_ready():
-    await tree.sync()  # synchroniser les slash commands
-    print(f"{bot.user} est connecté ✅")
-    send_event.start()  # lancer la tâche répétée
+    guild = discord.Object(id=GUILD_ID)
+
+    # Sync uniquement sur ton serveur → instantané
+    await tree.sync(guild=guild)
+
+    print(f"{bot.user} est connecté ✅ (slash commands synchronisées sur {GUILD_ID})")
+
+    # Optionnel : lancer ta tâche répétée
+    # send_event.start()
+
+    # Changer le status
+    await bot.change_presence(activity=discord.Game(name="NotionPing"))
+
+
+
+
+# ------------------------
+# Commande register
+# ------------------------
+
+
+    # Fonction Python qui écrit en base
+def register_user(discord_id, notion_id, user_name):
+    session = db.get_session()
+    try:
+        existing_user = session.query(User).filter_by(discord_id=discord_id).first()
+        if existing_user:
+            print(f"✗ L'utilisateur avec Discord ID {discord_id} existe déjà.")
+            return existing_user
+        
+        db.add_user(
+            discord_id=discord_id,
+            notion_id=notion_id,
+            name=user_name
+        )
+        print(f"✓ Nouvel utilisateur enregistré: {user_name} (Discord ID: {discord_id})")
+        return 'ok'
+    except Exception as e:
+        session.rollback()
+        print(f"✗ Erreur lors de l'enregistrement de l'utilisateur: {e}")
+        raise
+    finally:
+        session.close()
+
+# Commande slash
+@tree.command(name="register", description="Enregistrer un utilisateur avec son ID Notion")
+@app_commands.describe(notion_id="Votre ID utilisateur Notion", name="Votre nom")
+async def register(interaction: discord.Interaction, notion_id: str, name: str):
+    user = register_user(interaction.user.id, notion_id, name)
+    if user:
+        await interaction.response.send_message(f"Utilisateur enregistré: {user.name}")
+    else:
+        await interaction.response.send_message("Erreur lors de l'enregistrement.")
+
 
 # ------------------------
 # Fonction pour créer un embed d'événement
@@ -64,23 +118,23 @@ def create_event_embed(event: NotionEvent) -> discord.Embed:
     embed.set_footer(text=f"Créé par {event.created_by or 'Inconnu'}")
     return embed
 
-# ------------------------
-# Tâche répétée toutes les 15 minutes
-# ------------------------
-@tasks.loop(minutes=15)
-async def send_event():
-    session = db.get_session()
-    try:
-        event = session.query(NotionEvent).order_by(NotionEvent.date.desc()).first()
-        channel = bot.get_channel(CHANNEL_ID)
-        if channel:
-            if event:
-                embed = create_event_embed(event)
-                await channel.send(embed=embed)
-            else:
-                await channel.send("Pas d'événement la chef...")
-    finally:
-        session.close()
+# # ------------------------
+# # Tâche répétée toutes les 15 minutes
+# # ------------------------
+# @tasks.loop(minutes=15)
+# async def send_event():
+#     session = db.get_session()
+#     try:
+#         event = session.query(NotionEvent).order_by(NotionEvent.date.desc()).first()
+#         channel = bot.get_channel(CHANNEL_ID)
+#         if channel:
+#             if event:
+#                 embed = create_event_embed(event)
+#                 await channel.send(embed=embed)
+#             else:
+#                 await channel.send("Pas d'événement la chef...")
+#     finally:
+#         session.close()
 
 # ------------------------
 # Slash command /event
