@@ -25,6 +25,8 @@ class NotionEvent(Base):
     date = Column(DateTime)
     participant = Column(JSONB)  # Correction: utiliser JSONB au lieu de JSON
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    status = Column(String(255))  # Statut de l'événement
+    is_active = Column(Boolean, default=True)  # Pour marquer les événements actifs/inactifs
     
     def __repr__(self):
         return f"<NotionEvent(id={self.id}, title='{self.title}', date='{self.date}')>"
@@ -39,6 +41,7 @@ class User(Base):
     notion_id = Column(String(255), unique=True, nullable=False)  # ID Notion
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    is_active = Column(Boolean, default=True)  # Pour marquer les utilisateurs actifs/inactifs
 
     def __repr__(self):
         return f"<User(id={self.id}, discord_id='{self.discord_id}', name='{self.name}', notion_id='{self.notion_id}')>"
@@ -72,40 +75,35 @@ class DatabaseManager:
         """Obtenir une session de base de données"""
         return self.SessionLocal()
     
-    def add_notion_event(self, notion_id, title, description=None, event_date=None):
-        """Ajouter un nouvel événement Notion"""
+    def add_event(self, notion_id, title, status=None, description=None, price=None, date=None, created_by=None, archived=False, participant=None, updated_at=None, created_at=None):
         session = self.get_session()
         try:
-            # Vérifier si l'événement existe déjà
-            existing = session.query(NotionEvent).filter_by(notion_id=notion_id).first()
-            if existing:
-                # Mettre à jour l'événement existant
-                existing.title = title
-                existing.description = description
-                existing.date = event_date  # Correction: utiliser 'date' au lieu de 'event_date'
-                existing.updated_at = datetime.now(timezone.utc)
-                session.commit()
-                print(f"✓ Événement mis à jour: {title}")
-                return existing
-            else:
-                # Créer un nouvel événement
-                new_event = NotionEvent(
-                    notion_id=notion_id,
-                    title=title,
-                    description=description,
-                    date=event_date  # Correction: utiliser 'date' au lieu de 'event_date'
-                )
-                session.add(new_event)
-                session.commit()
-                print(f"✓ Nouvel événement ajouté: {title}")
-                return new_event
+            new_event = NotionEvent(
+                notion_id=notion_id,
+                created_by=created_by,
+
+                archived=archived,
+                title=title,
+                description=description,
+                price=price,
+                date=date,
+                
+                participant=participant,
+                updated_at=updated_at,
+                created_at=created_at,
+                status=status
+            )
+            session.add(new_event)
+            session.commit()
+            print(f"✓ Nouvel événement ajouté: {title}")
+            return new_event
         except Exception as e:
             session.rollback()
             print(f"✗ Erreur lors de l'ajout de l'événement: {e}")
             raise
         finally:
             session.close()
-    
+
     def get_all_events(self):
         """Récupérer tous les événements"""
         session = self.get_session()

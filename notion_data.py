@@ -2,6 +2,7 @@
 import requests
 import notion_data
 from dotenv import load_dotenv
+from database_models import DatabaseManager
 import json
 
 load_dotenv(dotenv_path=".env")
@@ -54,4 +55,48 @@ def get_notion_events():
         json.dump(data, f, indent=4)
     return data
 
-get_notion_events()
+def event_in_db():
+    data_events = get_notion_events()["results"]
+    db_manager = DatabaseManager()
+    all_events = db_manager.get_all_events()
+
+    for event in all_events:
+        if event.notion_id in [e['id'] for e in data_events]:
+            print(f"✓ Événement déjà présent dans la base de données: {event.title}")
+            data_events.remove(event.notion_id)
+        else:
+            print(f"✗ Nouvel événement à ajouter à la base de données: {event.title}")
+
+    for event in data_events:
+        notion_id = event['id']
+        created_by = event['created_by']['id']
+        created_at = event['created_time']
+
+        archived = event['archived']
+        title = event['properties']['Name']['title'][0]['text']['content']
+        description = event['properties']['Description']['rich_text'][0]['text']['content']
+        price = event['properties']['Prix']['number']
+        date = event['properties']['Date']['date']['start']
+
+        participant = json.dumps(event['properties']['Participants']['people'])
+        status = event['properties']['Type']['status']['name']
+        updated_at = event['last_edited_time']
+
+        # Add to db
+        db_manager = DatabaseManager()
+        db_manager.add_event(
+            notion_id=notion_id,
+            title=title,
+            description=description,
+            price=price,
+            date=date,
+            created_by=created_by,
+            archived=archived,
+            participant=participant,
+            updated_at=updated_at,
+            created_at=created_at,
+            status=status
+        )
+    return data_events
+
+event_in_db()
