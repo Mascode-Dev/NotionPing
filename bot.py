@@ -221,7 +221,7 @@ async def register(interaction: discord.Interaction, notion_id: str, member: dis
     finally:
         session.close()
 
-@tasks.loop(seconds=10)
+@tasks.loop(minutes=2)
 async def check_new_events():
     session = db.get_session()
     try:

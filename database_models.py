@@ -161,7 +161,7 @@ class DatabaseManager:
         user = session.query(User).filter_by(discord_id=str(discord_id)).first()
         try:
             event = session.query(NotionEvent).filter_by(notion_id=event_id).first()
-            if event:
+            if event and user.notion_id not in event.participant:
                 # Ajouter le notion_id à la liste des participants
                 event.participant.append(user.notion_id)
                 session.commit()
