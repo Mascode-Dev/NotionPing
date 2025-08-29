@@ -6,7 +6,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableList
 import os
+import traceback
 
 Base = declarative_base()
 
@@ -23,9 +25,12 @@ class NotionEvent(Base):
     description = Column(Text)
     price = Column(Integer)  # Prix de l'événement
     date = Column(DateTime)
-    participant = Column(JSONB)  # Correction: utiliser JSONB au lieu de JSON
+    participant = Column(MutableList.as_mutable(JSONB))  # Correction: utiliser JSONB pour stocker la liste des participants
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     status = Column(String(255))  # Statut de l'événement
+    location = Column(String(255))
+    limit_date = Column(DateTime)
+    duration = Column(String(255))
     is_active = Column(Boolean, default=True)  # Pour marquer les événements actifs/inactifs
     
     def __repr__(self):
@@ -75,23 +80,24 @@ class DatabaseManager:
         """Obtenir une session de base de données"""
         return self.SessionLocal()
     
-    def add_event(self, notion_id, title, status=None, description=None, price=None, date=None, created_by=None, archived=False, participant=None, updated_at=None, created_at=None):
+    def add_event(self, notion_id, title, status=None, description=None, price=None, date=None, created_by=None, archived=False, participant=None, updated_at=None, created_at=None, duration=None, location=None, limit_date=None):
         session = self.get_session()
         try:
             new_event = NotionEvent(
                 notion_id=notion_id,
-                created_by=created_by,
-
-                archived=archived,
                 title=title,
                 description=description,
                 price=price,
                 date=date,
-                
+                created_by=created_by,
+                archived=archived,
                 participant=participant,
                 updated_at=updated_at,
                 created_at=created_at,
-                status=status
+                status=status,
+                duration=duration,
+                location=location,
+                limit_date=limit_date
             )
             session.add(new_event)
             session.commit()
@@ -147,5 +153,45 @@ class DatabaseManager:
                 query = query.filter(NotionEvent.date <= end_date)  # Correction: utiliser 'date'
             
             return query.all()
+        finally:
+            session.close()
+
+    def update_participant_to_event(self, event_id, discord_id):
+        session = self.get_session()
+        user = session.query(User).filter_by(discord_id=str(discord_id)).first()
+        try:
+            event = session.query(NotionEvent).filter_by(notion_id=event_id).first()
+            if event:
+                # Ajouter le notion_id à la liste des participants
+                event.participant.append(user.notion_id)
+                session.commit()
+                print(f"✓ Participant mis à jour pour l'événement: {event.title}")
+            else:
+                print(f"✗ Événement non trouvé: {event_id}")
+        except Exception as e:
+            session.rollback()
+            print(f"✗ Erreur lors de la mise à jour du participant: {e}")
+            print(traceback.format_exc())
+            raise
+        finally:
+            session.close()
+
+
+    def delete_participant_from_event(self, event_id, discord_id):
+        session = self.get_session()
+        user = session.query(User).filter_by(discord_id=str(discord_id)).first()
+        try:
+            event = session.query(NotionEvent).filter_by(notion_id=event_id).first()
+            if event and user.notion_id in event.participant:
+                event.participant.remove(user.notion_id)
+                session.commit()
+                print(f"✓ Participant supprimé de l'événement: {event.title}")
+            else:
+                print(f"✗ Événement non trouvé: {event_id}")
+        except Exception as e:
+            session.rollback()
+            print(f"✗ Erreur lors de la suppression du participant: {e}")
+            print(traceback.format_exc())
+            raise
         finally:
             session.close()

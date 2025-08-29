@@ -63,7 +63,8 @@ def event_in_db():
     for event in all_events:
         if event.notion_id in [e['id'] for e in data_events]:
             print(f"✓ Événement déjà présent dans la base de données: {event.title}")
-            data_events.remove(event.notion_id)
+            # Supprimer l'event de data_event
+            data_events = [e for e in data_events if e['id'] != event.notion_id]
         else:
             print(f"✗ Nouvel événement à ajouter à la base de données: {event.title}")
 
@@ -78,14 +79,21 @@ def event_in_db():
         price = event['properties']['Prix']['number']
         date = event['properties']['Date']['date']['start']
 
-        participant = json.dumps(event['properties']['Participants']['people'])
+        participant = []
+        for person in event['properties']['Participants']['people']:
+            participant.append(person['id'])
+            
         status = event['properties']['Type']['status']['name']
         updated_at = event['last_edited_time']
 
+        duration = event['properties']['Durée']['rich_text'][0]['text']['content'] if event['properties']['Durée']['rich_text'] else None
+        location = event['properties']['Lieu']['rich_text'][0]['text']['content'] if event['properties']['Lieu']['rich_text'] else None
+        limit_date = event['properties']['Date limite choix de participation']['date']['start'] if event['properties']['Date limite choix de participation']['date'] else None
         # Add to db
         db_manager = DatabaseManager()
         db_manager.add_event(
             notion_id=notion_id,
+            
             title=title,
             description=description,
             price=price,
@@ -95,8 +103,12 @@ def event_in_db():
             participant=participant,
             updated_at=updated_at,
             created_at=created_at,
-            status=status
+            status=status,
+            duration=duration,
+            location=location,
+            limit_date=limit_date
         )
     return data_events
 
-event_in_db()
+if __name__ == "__main__":
+    event_in_db()
