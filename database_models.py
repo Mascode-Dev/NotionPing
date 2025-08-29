@@ -104,6 +104,27 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def add_user(self, name, discord_id, notion_id, created_at=None, updated_at=None):
+        session = self.get_session()
+        try:
+            new_user = User(
+                notion_id=notion_id,
+                discord_id=discord_id,
+                name=name,
+                created_at=created_at,
+                updated_at=updated_at
+            )
+            session.add(new_user)
+            session.commit()
+            print(f"✓ Nouvel utilisateur ajouté: {name}")
+            return new_user
+        except Exception as e:
+            session.rollback()
+            print(f"✗ Erreur lors de l'ajout de l'utilisateur: {e}")
+            raise
+        finally:
+            session.close()
+
     def get_all_events(self):
         """Récupérer tous les événements"""
         session = self.get_session()
