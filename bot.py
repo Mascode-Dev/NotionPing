@@ -165,6 +165,118 @@ class ParticipationView(discord.ui.View):
         db.delete_participant_from_event(self.event_id, interaction.user.id)
         await interaction.response.send_message("❌ Participation refusée.", ephemeral=True)
         
+class EventsPaginator(discord.ui.View):
+    def __init__(self, events, user, timeout=180):
+        super().__init__(timeout=timeout)
+        self.events = events
+        self.user = user
+        self.page = 0
+
+        # Ne créer les boutons que si plus d'un événement
+        if len(events) <= 1:
+            self.no_buttons = True
+        else:
+            self.no_buttons = False
+
+    def get_embed(self):
+        event = self.events[self.page]
+        embed = create_event_embed(event)
+        embed.set_footer(text=f"Événement {self.page+1}/{len(self.events)}")
+        return embed
+
+    @discord.ui.button(label="⬅️ Précédent", style=discord.ButtonStyle.primary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if getattr(self, "no_buttons", False):
+            return  # Ignore le bouton si inutilisé
+        if interaction.user != self.user:
+            await interaction.response.send_message("❌ Tu ne peux pas utiliser cette pagination.", ephemeral=True)
+            return
+        self.page = (self.page - 1) % len(self.events)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="➡️ Suivant", style=discord.ButtonStyle.primary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if getattr(self, "no_buttons", False):
+            return
+        if interaction.user != self.user:
+            await interaction.response.send_message("❌ Tu ne peux pas utiliser cette pagination.", ephemeral=True)
+            return
+        self.page = (self.page + 1) % len(self.events)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+class EventPaginationView(discord.ui.View):
+    def __init__(self, events, current_index=0):
+        super().__init__(timeout=None)
+        self.events = events
+        self.current_index = current_index
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.clear_items()
+        # Boutons navigation
+        if self.current_index > 0:
+            self.add_item(self.PreviousButton(self))
+        if self.current_index < len(self.events) - 1:
+            self.add_item(self.NextButton(self))
+        # Boutons participation
+        self.add_item(self.ParticipateButton(self))
+        self.add_item(self.RefuseButton(self))
+
+    def get_current_event(self):
+        return self.events[self.current_index]
+
+    class PreviousButton(discord.ui.Button):
+        def __init__(self, view):
+            super().__init__(label="⬅️ Précédent", style=discord.ButtonStyle.secondary, row=0)
+            self.view_ref = view
+        async def callback(self, interaction: discord.Interaction):
+            if self.view_ref.current_index > 0:
+                self.view_ref.current_index -= 1
+                await self.update_embed(interaction)
+        async def update_embed(self, interaction):
+            event = self.view_ref.get_current_event()
+            embed = create_event_embed(event)
+            embed.set_footer(text=f"Événement {self.view_ref.current_index+1}/{len(self.view_ref.events)} | Créé par {get_name_by_notion_id(event.created_by) or 'Inconnu'}")
+            self.view_ref.update_buttons()
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+
+    class NextButton(discord.ui.Button):
+        def __init__(self, view):
+            super().__init__(label="Suivant ➡️", style=discord.ButtonStyle.secondary, row=0)
+            self.view_ref = view
+        async def callback(self, interaction: discord.Interaction):
+            if self.view_ref.current_index < len(self.view_ref.events) - 1:
+                self.view_ref.current_index += 1
+                await self.update_embed(interaction)
+        async def update_embed(self, interaction):
+            event = self.view_ref.get_current_event()
+            embed = create_event_embed(event)
+            embed.set_footer(text=f"Événement {self.view_ref.current_index+1}/{len(self.view_ref.events)} | Créé par {get_name_by_notion_id(event.created_by) or 'Inconnu'}")
+            self.view_ref.update_buttons()
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+
+    class ParticipateButton(discord.ui.Button):
+        def __init__(self, view):
+            super().__init__(label="Participer", style=discord.ButtonStyle.success, row=1)
+            self.view_ref = view
+        async def callback(self, interaction: discord.Interaction):
+            event = self.view_ref.get_current_event()
+            db.update_participant_to_event(event.notion_id, interaction.user.id)
+            if event.status == "Payant":
+                discord_id = get_discord_id_by_notion(event.created_by)
+                mention = f"<@{discord_id}>" if discord_id else "l'organisateur"
+                await interaction.response.send_message(f"✅ Participation enregistrée !\nN'oublie pas d'envoyer {event.price}€ à {mention}.", ephemeral=True)
+            else:
+                await interaction.response.send_message("✅ Participation enregistrée !", ephemeral=True)
+
+    class RefuseButton(discord.ui.Button):
+        def __init__(self, view):
+            super().__init__(label="Refuser", style=discord.ButtonStyle.danger, row=1)
+            self.view_ref = view
+        async def callback(self, interaction: discord.Interaction):
+            event = self.view_ref.get_current_event()
+            db.delete_participant_from_event(event.notion_id, interaction.user.id)
+            await interaction.response.send_message("❌ Participation refusée.", ephemeral=True)
 
 @client.event
 async def on_ready():
@@ -178,22 +290,23 @@ async def on_ready():
         print(f"✗ Échec de la synchronisation des commandes: {e}")
 
 
-@client.tree.command(name="event", description="Return the last Notion event")
+@client.tree.command(name="event", description="Afficher les événements Notion avec navigation")
 async def event(interaction: discord.Interaction):
     session = db.get_session()
     try:
-        last_event = session.query(NotionEvent).order_by(NotionEvent.date.desc()).first()
-        if last_event:
-            embed = create_event_embed(last_event)
-            view = ParticipationView(event=last_event)
-            await interaction.response.send_message(embed=embed, view=view)
-        else:
+        events = session.query(NotionEvent).order_by(NotionEvent.date.desc()).all()
+        if not events:
             await interaction.response.send_message("Aucun événement trouvé.")
+            return
+        embed = create_event_embed(events[0])
+        # Ajout du footer pagination
+        embed.set_footer(text=f"Événement 1/{len(events)} | Créé par {get_name_by_notion_id(events[0].created_by) or 'Inconnu'}")
+        view = EventPaginationView(events)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     except Exception as e:
-        print(f"✗ Erreur lors de la récupération de l'événement: {e}")
-        await interaction.response.send_message("Une erreur s'est produite lors de la récupération de l'événement.")
+        print(f"✗ Erreur lors de la récupération des événements: {e}")
+        await interaction.response.send_message("Une erreur s'est produite lors de la récupération des événements.", ephemeral=True)
     finally:
-        session.rollback()  # explicite
         session.close()
 
 @client.tree.command(name="register", description="Register a new user in the database")
@@ -218,6 +331,56 @@ async def register(interaction: discord.Interaction, notion_id: str, member: dis
     except Exception as e:
         print(f"✗ Erreur lors de l'enregistrement de l'utilisateur: {e}")
         await interaction.response.send_message("Une erreur s'est produite lors de l'enregistrement de l'utilisateur.")
+    finally:
+        session.close()
+
+@client.tree.command(name="myevents", description="Voir les événements auxquels vous êtes inscrit")
+async def myevents(interaction: discord.Interaction):
+    session = db.get_session()
+    try:
+        user = session.query(User).filter_by(discord_id=str(interaction.user.id)).first()
+        if not user:
+            await interaction.response.send_message("❌ Tu n'es pas encore enregistré. Utilise `/register`.", ephemeral=True)
+            return
+
+        # Récupérer les événements où il est inscrit
+        events = session.query(NotionEvent).all()
+        my_events = [event for event in events if str(user.notion_id) in event.participant]
+
+        if not my_events:
+            await interaction.response.send_message("😢 Tu n'es inscrit à aucun événement.", ephemeral=True)
+            return
+
+        # Répond d'abord à l'interaction pour éviter l'expiration
+        await interaction.response.defer(ephemeral=True)
+        # Créer le paginator
+        view = EventsPaginator(my_events, interaction.user)
+        dm_sent = False
+        try:
+            if len(my_events) == 1:
+                await interaction.user.send(embed=view.get_embed())
+            else:
+                await interaction.user.send(embed=view.get_embed(), view=view)
+            dm_sent = True
+        except Exception as dm_error:
+            print(f"✗ Impossible d'envoyer le DM: {dm_error}")
+            dm_sent = False
+
+        # Edite la réponse selon le succès du DM
+        if dm_sent:
+            await interaction.followup.send("📩 J’ai envoyé la liste de tes événements en privé.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Impossible de t'envoyer un message privé. Vérifie tes paramètres Discord.", ephemeral=True)
+
+    except Exception as e:
+        print(f"✗ Erreur lors de la commande myevents: {e}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Une erreur est survenue.", ephemeral=True)
+            else:
+                await interaction.followup.send("Une erreur est survenue.", ephemeral=True)
+        except Exception:
+            pass
     finally:
         session.close()
 
